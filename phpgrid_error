@@ -1,0 +1,555 @@
+<?php 
+include_once("seguridad.php");
+include_once("../conn/constantes.php");
+
+list($db_base, $themeid, $codLenguaje, $cantidadRegistroGrilla1) = Variables($mysqli, $codUsuario, "base,pa.apariencia apariencia,codLenguaje,cantidadRegistroGrilla1");
+
+include_once("../phpgrid/config.php");
+include_once(PHPGRID_LIBPATH."inc/jqgrid_dist.php");
+
+$db_conf = array("type" => PHPGRID_DBTYPE, "server" => PHPGRID_DBHOST, "user" => PHPGRID_DBUSER, "password" => PHPGRID_DBPASS, "database" => PHPGRID_DBNAME );
+$g = new jqgrid($db_conf);
+
+list($codActividad, $codDivision, $codCategoria) = Perfil($db_base, $g, $codUsuario);
+list($agregar, $editar, $borrar) = PermisoUsuario($db_base, $g, $codUsuario, $_SERVER["PHP_SELF"]);
+
+$captionList1 = "PARTIDOS";
+$captionList2 = "FORMACION";
+
+function add_Partido($data) {
+    global $g;
+    $data["params"]["codPartido"] = CodMaxPhpGrid($g, "partidos", "codPartido");
+    $data["params"]["fecha"] = formateafecha($data["params"]["fecha"], "d-m-Y", "Y-m-d");
+    $data["params"]["estado"] = 'A';
+    unset($data["params"]["codActividad"]);
+    unset($data["params"]["codCategoria"]);
+    unset($data["params"]["club"]);
+}
+function upd_Partido($data) {
+    $data["params"]["fecha"] = formateafecha($data["params"]["fecha"], "d-m-Y", "Y-m-d");
+    unset($data["params"]["codCategoria"]);
+}
+function add_After_Partido($data) {
+    global $g;
+    phpgrid_error("hola");
+    if ($data['params']['repite']=="S") {
+        $sql = "SELECT IFNULL(MAX(fecha), '0000-00-00') fechaUltimoPartido FROM partidos WHERE codPartido!=".$data['params']['codPartido']." AND codEquipo=".$data['params']['codEquipo']." AND fecha<'".$data['params']['fecha']."'";
+        $row = $g->get_one($sql);
+        if ($row) {
+            $fechaUltimoPartido = $row["fechaUltimoPartido"];
+            $sql = "SELECT codPartido codUltimoPartido, estado FROM partidos WHERE fecha='$fechaUltimoPartido' AND codEquipo=".$data['params']['codEquipo'];
+            $row = $g->get_one($sql);
+            if ($row) {
+                $codUltimoPartido = $row["codUltimoPartido"];
+                $estado = $row["estado"];
+                if ($estado=='A') {  
+                    $sql = "SELECT codJugador, codPosicion, jugo, orden FROM partidos_formaciones_tmp WHERE codPartido=$codUltimoPartido AND codPosicion NOT IN (17,18)";
+                } else {
+                    $sql = "SELECT codJugador, codPosicion, jugo, orden FROM partidos_formaciones WHERE codPartido=$codUltimoPartido AND codPosicion NOT IN (17,18)";
+                }
+                $row = $g->get_all($sql);
+                if ($row) {
+                    foreach($row as $campos) {
+                        $codPartidoFormacionTmp = CodMaxPhpGrid($g, "partidos_formaciones_tmp", "codPartidoFormacionTmp");
+                        if ($row["codPosicion"]>0 && $row["codPosicion"]<16) {
+                            $minutos = 80;
+                            $tipoJugador = "T";
+                        } else {
+                            $minutos = 0;
+                            $tipoJugador = "S";
+                        }
+                        $codPartido = $data['params']['codPartido'];
+                        $codJugador = $campos["codJugador"];
+                        $codPosicion = $campos["codPosicion"];
+                        $jugo = $campos["jugo"];
+                        $orden = $campos["orden"];
+                        $sql = "INSERT INTO partidos_formaciones_tmp SET codPartidoFormacionTmp=$codPartidoFormacionTmp, codPartido=$codPartido, codJugador=$codJugador, codPosicion=$codPosicion, jugo='$jugo', orden='$orden', tipoJugador='$tipoJugador', minutos=$minutos, amarilla1='N', amarilla2='N', roja='N', lesion='N'";
+                        $g->select_command = $sql;
+                    }
+                    $codPartidoFormacionTmp = CodMax("partidos_formaciones_tmp", "codPartidoFormacionTmp");
+                    $codJugador = -1;
+                    $codPosicion = 17; // Try penal
+                    $tipoJugador = "P"; 
+                    $sql = "INSERT INTO partidos_formaciones_tmp SET codPartidoFormacionTmp='$codPartidoFormacionTmp', codPartido=".$data["params"]["codPartido"].", codJugador=$codJugador, codPosicion=$codPosicion, tipoJugador='$tipoJugador', amarilla1='N', amarilla2='N', roja='N', lesion='N'";
+                    $g->select_command = $sql;
+                    $codPartidoFormacionTmp = CodMax("partidos_formaciones_tmp", "codPartidoFormacionTmp");
+                    $codJugador = -2;
+                    $codPosicion = 18; // Puntos de lo rivales
+                    $tipoJugador = "P";
+                    $sql = "INSERT INTO partidos_formaciones_tmp SET codPartidoFormacionTmp='$codPartidoFormacionTmp', codPartido=".$data['params']['codPartido'].", codJugador=$codJugador, codPosicion=$codPosicion, tipoJugador='$tipoJugador', amarilla1='N', amarilla2='N', roja='N', lesion='N'";
+                    $g->select_command = $sql;
+                }
+            }
+        }
+    }
+}
+
+$opt["caption"] = $captionList1;
+$opt["sortname"] = 'fechaOrden';
+$opt["sortorder"] = "DESC";
+$opt["rowNum"] = $cantidadRegistroGrilla1;
+$opt["height"] = 30*$cantidadRegistroGrilla1;
+$opt["autowidth"] = true;
+$opt["responsive"] = true;
+$opt["detail_grid_id"] = "list2";
+$opt["subgridparams"] = "codPartido,estado";
+$opt["add_options"] = array("recreateForm" => true, "closeAfterEdit"=>true, 'width'=>'620'); 
+$opt["add_options"]["beforeSubmit"] = "function(post,form){return validaPartido(post,form)}";
+$opt["edit_options"] = array("recreateForm" => true, "closeAfterEdit"=>true, 'width'=>'620');
+$opt["view_options"] = array("recreateForm" => true, "closeAfterEdit"=>true, 'width'=>'620');
+$g->set_options($opt);
+
+$g->set_actions(array("add"=>$agregar, "edit"=>$editar, "bulkedit"=>false, "delete"=>false, "rowactions"=>false, "autofilter"=>true, "search"=>"simple"));
+
+$e["on_insert"] = array("add_Partido", null, true);
+$e["on_update"] = array("upd_Partido", null, true);
+$e["on_after_insert"] = array("add_After_Partido", null, true);
+$g->set_events($e);
+
+$g->table = "partidos";
+
+$sql = "SELECT pa.codPartido, pa.codClub, cl.club, ca.codCategoria, pa.codEquipo, pa.fecha fechaOrden, DATE_FORMAT( pa.fecha,  '%d-%m-%Y' ) fecha, pa.hora, pa.localia, pa.tipo, pa.codCampeonato, pa.repite, pa.micro, pa.cantidadMicros, pa.nos, pa.ellos, pa.codArbitro, pa.codEspacio, pa.try, pa.conversion, pa.penal, pa.drops, pa.infraccion, pa.jugadores, pa.estado, ca.codActividad 
+        FROM partidos pa
+        INNER JOIN equipos eq ON pa.codEquipo=eq.codEquipo
+        INNER JOIN clubes cl ON pa.codClub=cl.codClub
+        INNER JOIN categorias ca ON eq.codCategoria=ca.codCategoria
+        WHERE eq.codCategoria IN ($codCategoria)";
+$g->select_command = $sql;
+
+$col = array();
+$col["title"] = "Id";
+$col["name"] = "codPartido";
+$col["hidden"] = true;
+$col["autoid"] = false;
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "codClub";
+$col["name"] = "codClub"; 
+$col["editable"] = true;
+$col["hidden"] = true;
+$col["editrules"] = array("required"=>true);
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Actividad";
+$col["name"] = "codActividad";
+$str = $g->get_dropdown_values("SELECT codActividad AS k, actividad AS v FROM actividades WHERE codActividad IN ($codActividad) AND estado='A' ORDER BY actividad");
+$col["stype"] = "select"; 
+$col["searchoptions"] = array("value"=>$str, "separator"=>":", "delimiter"=>";");
+$col["edittype"] = "select";
+$col["editoptions"] = array("value"=>$str, "separator"=>":", "delimiter"=>";", "onchange"=>array("sql"=>"SELECT codCategoria AS k, categoria AS v FROM categorias WHERE codActividad={codActividad} AND codCategoria IN ($codCategoria) AND estado='A' ORDER BY orden", "update_field"=>"codCategoria"));
+$col["formatter"] = "select";
+$col["editable"] = true;
+$col["width"] = "60";
+$col["visible"] = "sm+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Categoria";    
+$col["name"] = "codCategoria";
+$str = $g->get_dropdown_values("SELECT codCategoria AS k, categoria AS v FROM categorias WHERE codCategoria IN ($codCategoria) AND estado='A' ORDER BY orden");
+$col["stype"] = "select"; 
+$col["searchoptions"] = array("value"=>$str, "separator"=>":", "delimiter"=>";");
+$col["edittype"] = "select";
+$col["editoptions"] = array("value"=>$str, "separator"=>":", "delimiter"=>";", "onchange"=>array("sql"=>"SELECT codEquipo AS k, equipo AS v FROM equipos WHERE codCategoria={codCategoria} AND estado='A'", "update_field"=>"codEquipo"));
+$col["formatter"] = "select"; 
+$col["width"] = "60";
+$col["editable"] = true;
+$col["visible"] = "xs+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Equipo";    
+$col["name"] = "codEquipo";
+$col["dbname"] = "pa.codEquipo";
+$str = $g->get_dropdown_values("SELECT codEquipo AS k, equipo AS v FROM equipos WHERE codCategoria in ($codCategoria) AND estado='A'");
+$col["stype"] = "select";
+$col["searchoptions"] = array("value"=>$str, "separator"=>":", "delimiter"=>";");
+$col["edittype"] = "select";
+$col["editoptions"] = array("value"=>$str, "separator"=>":", "delimiter"=>";");
+$col["formatter"] = "select";
+$col["width"] = "50";
+$col["editable"] = true;
+$col["visible"] = "xs+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Fecha";
+$col["name"] = "fecha";
+$col["editable"] = true;
+$col["editoptions"] = array("size"=>10, "maxlength"=>10, "onKeyUp"=>"this.value=formateafecha(this.value)");
+$col["align"] = "center";
+$col["editrules"] = array("required"=>true);
+$col["show"] = array("list"=>false);
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Fecha";
+$col["name"] = "fechaOrden";
+$col["align"] = "center";
+$col["width"] = "30";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Hora";
+$col["name"] = "hora";
+$col["editoptions"] = array("size"=>5, "maxlength"=>5, "onKeyUp"=>"this.value=formateahora(this.value)");
+$col["editable"] = true;
+$col["editrules"] = array("required"=>true);
+$col["align"] = "center";
+$col["width"] = "20"; 
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Campeonato";    
+$col["name"] = "codCampeonato";
+$str = $g->get_dropdown_values("SELECT codCampeonato AS k, campeonato AS v FROM campeonatos WHERE codActividad IN ($codActividad) ORDER BY campeonato");
+$col["stype"] = "select";
+$col["searchoptions"] = array("value" => $str, "separator" => ":", "delimiter" => ";");
+$col["edittype"] = "select";
+$col["editoptions"] = array("value" => $str, "separator" => ":", "delimiter" => ";");
+$col["formatter"] = "select";
+$col["width"] = "70";
+$col["editable"] = true;
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Tipo";    
+$col["name"] = "tipo";
+$col["editoptions"] = array("value"=>TIPOPARTIDO, "defaultValue"=>'O'); 
+$col["searchoptions"] = array("value"=>":;".TIPOPARTIDO);
+$col["edittype"] = "select";
+$col["stype"] = "select"; 
+$col["formatter"] = "select";
+$col["width"] = "25";
+$col["editable"] = true;
+$col["align"] = "center";
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Localia";    
+$col["name"] = "localia";
+$col["dbname"] = "pa.localia";
+$col["editoptions"] = array("value"=>LOCALIA, "defaultValue"=>'L'); 
+$col["searchoptions"] = array("value"=>":;".LOCALIA);
+$col["edittype"] = "select";
+$col["stype"] = "select"; 
+$col["formatter"] = "select";
+$col["width"] = "35";
+$col["editable"] = true;
+$col["align"] = "center";
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Rival";
+$col["name"] = "club";
+$col["dbname"] = "cl.club";
+$col["editable"] = true;
+$col["width"] = "120";
+$col["editoptions"] = array("size"=>50, "maxlength" => "50");
+$col["formatter"] = "autocomplete";
+$col["formatoptions"] = array("sql"=>"SELECT codClub AS k, club AS v FROM clubes ORDER BY club", "search_on"=>"club", "update_field"=>"codClub");
+$col["visible"] = "xs+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Repite equipo";
+$col["name"] = "repite";
+$col["dbname"] = "pa.repite";
+$col["editoptions"] = array("value"=>SN, "defaultValue"=>'N'); 
+$col["searchoptions"] = array("value"=>":;".SN);
+$col["edittype"] = "select";
+$col["stype"] = "select"; 
+$col["formatter"] = "select";
+$col["editable"] = true;
+$col["show"] = array("list"=>false);
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Micro";    
+$col["name"] = "micro";
+$col["dbname"] = "pa.micro";
+$col["editoptions"] = array("value"=>SN, "defaultValue"=>'N'); 
+$col["searchoptions"] = array("value"=>":;".SN);
+$col["edittype"] = "select";
+$col["stype"] = "select"; 
+$col["formatter"] = "select";
+$col["width"] = "30";
+$col["editable"] = true;
+$col["show"] = array("list"=>false);
+$col["align"] = "center";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Cant de micros";
+$col["name"] = "cantidadMicros";
+$col["editable"] = true;
+$col["editoptions"] = array("size"=>"2", "maxlength" => "2", "onkeypress" => "if (event.keyCode < 48 || event.keyCode > 57) event.returnValue = false");
+$col["show"] = array("list"=>false);
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Nosotros";
+$col["name"] = "nos";
+$col["width"] = "15";
+$col["align"] = "center";
+$col["visible"] = "sm+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Ellos";
+$col["name"] = "ellos";
+$col["width"] = "15";
+$col["align"] = "center";
+$col["visible"] = "sm+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Infrac";
+$col["name"] = "infraccion";
+$col["show"] = array("list"=>false);
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Estado";    
+$col["name"] = "estado";
+$col["dbname"] = "pa.estado";
+$col["editoptions"] = array("value"=>AC, "defaultValue"=>'A'); 
+$col["searchoptions"] = array("value"=>":;".AC);
+$col["edittype"] = "select";
+$col["stype"] = "select"; 
+$col["formatter"] = "select";
+$col["width"] = "40";
+$col["align"] = "center";
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$g->set_columns($cols); 
+
+$out_master = $g->render("list1");
+
+$g = new jqgrid($db_conf);
+
+$cols = array();
+
+$opt = array(); 
+$opt["caption"] = $captionList2;
+$opt["sortname"] = 'codPosicion';
+$opt["datatype"] = "local";
+$opt["rowNum"] = 36;
+$opt["autowidth"] = true;
+$opt["responsive"] = true;
+
+$g->set_options($opt);
+
+$g->set_actions(array("add"=>false, "edit"=>false, "bulkedit"=>false, "delete"=>false, "rowactions"=>false, "autofilter"=>true, "view"=>false, "search"=>false));
+
+$codPartido = $_GET['codPartido'];
+$estado = $_GET['estado'];
+
+$g->table = "partidos_formaciones_tmp";
+
+if ($estado=="A") {
+    $sql = "SELECT fo.codPartidoFormacionTmp codPartidoFormacion, CONCAT(ju.nombre,' ', ju.apellido) nombre, ju.grupo, fo.codPosicion, fo.codJugador, fo.tipoJugador, fo.minutos, fo.try, fo.conversion, fo.penal, fo.drops, fo.amarilla1, fo.amarilla2, fo.roja, fo.lesion
+        FROM partidos_formaciones_tmp fo
+        LEFT JOIN jugadores ju ON fo.codJugador=ju.codJugador
+        WHERE codPartido='$codPartido'";
+} else {
+    $sql = "SELECT fo.codPartidoFormacion, CONCAT(ju.nombre,' ', ju.apellido) nombre, ju.grupo, fo.codPosicion, fo.codJugador, fo.tipoJugador, fo.minutos, fo.try, fo.conversion, fo.penal, fo.drops, fo.amarilla1, fo.amarilla2, fo.roja, fo.lesion
+        FROM partidos_formaciones fo
+        LEFT JOIN jugadores ju ON fo.codJugador=ju.codJugador
+        WHERE codPartido='$codPartido'";
+}
+$g->select_command = $sql;
+
+$col = array();
+$col["title"] = "Id";
+$col["name"] = "codPartidoFormacion";
+$col["autoid"] = false;
+$col["hidden"] = true;
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "codJugador";
+$col["name"] = "codJugador";
+$col["editable"] = true;
+$col["hidden"] = true;
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Posicion";
+$col["name"] = "codPosicion";
+$str = $g->get_dropdown_values("SELECT po.codPosicion AS k, po.posicion AS v FROM posiciones po INNER JOIN puestos pu ON po.codPuesto=pu.codPuesto WHERE pu.codActividad IN ($codActividad) AND pu.estado='A' AND po.estado='A'");
+$col["stype"] = "select"; 
+$col["searchoptions"] = array("value" => $str, "separator" => ":", "delimiter" => ";");
+$col["edittype"] = "select";
+$col["editoptions"] = array("value" => $str, "separator" => ":", "delimiter" => ";");
+$col["formatter"] = "select";
+$col["align"] = "center";
+$col["width"] = 40;
+$col["visible"] = "sm+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Jugador";
+$col["name"] = "nombre";
+$col["formatter"] = "autocomplete";
+$col["editoptions"] = array("size"=>60);
+$col["formatoptions"] = array("sql"=>"SELECT codJugador AS k, CONCAT( apellido,  ' ', nombre ) AS v FROM jugadores WHERE estado='A' ORDER BY apellido", "search_on"=>"CONCAT(apellido, ' ',nombre)", "update_field"=>"codJugador");
+$col["show"] = array("edit"=>false);
+$col["width"] = 100;
+$col["visible"] = "xs+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Minuto";
+$col["name"] = "minutos";
+$col["align"] = center;
+$col["width"] = 30;
+$col["visible"] = "sm+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Tries";
+$col["name"] = "try";
+$col["align"] = center;
+$col["width"] = 30;
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Conversiones";
+$col["name"] = "conversion"; 
+$col["align"] = center;
+$col["width"] = 30;
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Penales";
+$col["name"] = "penal"; 
+$col["align"] = center;
+$col["width"] = 30;
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Drops";
+$col["name"] = "drops"; 
+$col["align"] = center;
+$col["width"] = 30;
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Amarilla 1";
+$col["name"] = "amarilla1";
+$col["editoptions"] = array("value"=>SN, "defaultValue"=>'N'); 
+$col["searchoptions"] = array("value"=>":;".SN);
+$col["edittype"] = "select";
+$col["stype"] = "select"; 
+$col["formatter"] = "select";
+$col["width"] = 30;
+$col["align"] = center;
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Amarilla 2";
+$col["name"] = "amarilla2";
+$col["editoptions"] = array("value"=>SN, "defaultValue"=>'N'); 
+$col["searchoptions"] = array("value"=>":;".SN);
+$col["edittype"] = "select";
+$col["stype"] = "select"; 
+$col["formatter"] = "select";
+$col["width"] = 30;
+$col["align"] = center;
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Roja";
+$col["name"] = "roja";
+$col["editoptions"] = array("value"=>SN, "defaultValue"=>'N'); 
+$col["searchoptions"] = array("value"=>":;".SN);
+$col["edittype"] = "select";
+$col["stype"] = "select"; 
+$col["formatter"] = "select";
+$col["width"] = 30;
+$col["align"] = center;
+$col["visible"] = "md+";
+$cols[] = $col;
+
+$col = array();
+$col["title"] = "Lesion";
+$col["name"] = "lesion";
+$col["editoptions"] = array("value"=>SN, "defaultValue"=>'N'); 
+$col["searchoptions"] = array("value"=>":;".SN);
+$col["edittype"] = "select";
+$col["stype"] = "select"; 
+$col["formatter"] = "select";
+$col["width"] = 30;
+$col["align"] = center;
+$col["visible"] = "sm+";
+$cols[] = $col;
+
+$g->set_columns($cols);
+
+$out_list2 = $g->render("list2");
+
+
+?>
+ 
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"> 
+<html> 
+<head> 
+    <link rel="stylesheet" type="text/css" media="screen" href="../phpgrid/lib/js/themes/<?php echo $themeid ?>/jquery-ui.custom.css"></link>     
+    <link rel="stylesheet" type="text/css" media="screen" href="../phpgrid/lib/js/jqgrid/css/ui.jqgrid.css"></link>
+    <link rel="stylesheet" type="text/css" media="screen" href="../css/colores.css"></link> 
+     
+    <script src="../phpgrid/lib/js/jquery.min.js" type="text/javascript"></script> 
+    <script src="../phpgrid/lib/js/jqgrid/js/i18n/grid.locale-es.js" type="text/javascript"></script> 
+    <script src="../phpgrid/lib/js/jqgrid/js/jquery.jqGrid.min.js" type="text/javascript"></script>     
+    <script src="../phpgrid/lib/js/themes/jquery-ui.custom.min.js" type="text/javascript"></script>
+    <script src="../js/utiles.js"></script>
+    <script>
+        function validaPartido(post, form) {
+            var str = [];
+            var parametros = {
+                "codEquipo" : post.codEquipo,
+                "fecha" : post.fecha,
+                "codUsuario" : "<?php echo $codUsuario ?>"
+            };
+            $.ajax({
+                data : parametros,
+                url : "ajax_busca_partido_si_existe.php",
+                dataType : "json",
+                type : "post",
+                async : false,
+                success:  function (response) {
+                    if (response.error!="OK") str[str.length] = response;
+                }
+            });
+            str = str.join("<br>");
+            if (str.length == 0) {
+                return [true, ""];
+            } else {
+                return [false, "Chequee los siguientes errores:<br>"+str];
+            }
+        }
+    </script>
+</head> 
+<body> 
+    <div style="margin:10px">
+        <?php echo $out_master ?>
+        <br> 
+        <?php echo $out_list2?> 
+        </div>
+    </div> 
+</body> 
+</html> 
